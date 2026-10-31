@@ -10,7 +10,15 @@
 *{box-sizing:border-box;margin:0}
 html,body{height:100%;font-family:system-ui,sans-serif;overflow:hidden}
 #map{position:absolute;inset:0}
-.top{position:absolute;top:calc(env(safe-area-inset-top,0px) + 10px);left:10px;right:10px;background:#fff;border-radius:30px;padding:10px 16px;box-shadow:0 2px 10px #0004;font-size:14px;z-index:5}
+.top{position:absolute;top:calc(env(safe-area-inset-top,0px) + 10px);left:10px;right:10px;background:#fff;border-radius:22px;padding:8px 10px;box-shadow:0 2px 10px #0004;font-size:14px;z-index:5}
+.sb{display:flex;gap:6px}.sb input{flex:1;min-width:0;border:0;background:#f1f1f1;border-radius:18px;padding:10px 14px;font-size:16px;outline:0}
+.sb button{border:0;background:#b0124f;color:#fff;border-radius:18px;padding:0 14px;font-size:16px}
+#res{max-height:230px;overflow:auto}#res div{padding:10px 6px;border-top:1px solid #eee;font-size:13px}
+#top{font-size:12px;color:#444;margin-top:6px;padding:2px 4px;border-radius:8px}
+#bfollow.off{background:#b0124f;color:#fff;animation:pl 1.2s infinite}
+@keyframes pl{50%{transform:scale(1.12)}}
+.me .dir{position:absolute;inset:-18px;pointer-events:none}
+.me .dir::before{content:'';position:absolute;left:50%;top:0;width:26px;height:28px;margin-left:-13px;background:#b0124f;clip-path:polygon(50% 0,100% 100%,50% 72%,0 100%);filter:drop-shadow(0 1px 2px #0008)}
 .top b{color:#b0124f}
 .fab{position:absolute;right:12px;width:48px;height:48px;border-radius:50%;background:#fff;border:0;box-shadow:0 2px 8px #0004;font-weight:700;z-index:5}
 #b2d{bottom:260px}#bfollow{bottom:204px}
@@ -27,180 +35,3 @@ html,body{height:100%;font-family:system-ui,sans-serif;overflow:hidden}
 .me{width:46px;height:46px;position:relative}
 .me .ring{position:absolute;inset:0;border-radius:50%;background:#b0124f44;animation:p 1.6s infinite}
 .me .ic{position:absolute;inset:6px;border-radius:50%;background:#b0124f;border:3px solid #fff;display:flex;align-items:center;justify-content:center;font-size:18px;box-shadow:0 2px 6px #0006}
-@keyframes p{0%{transform:scale(.6);opacity:1}100%{transform:scale(1.4);opacity:0}}
-.dest{font-size:30px}
-</style>
-</head>
-<body>
-<div id="map"></div>
-<div class="top" id="top">Map-e jekhane tap korba, shekhane <b>destination</b> hobe</div>
-<button class="fab" id="b2d">2D</button>
-<button class="fab" id="bfollow">🎯</button>
-<div class="card">
-  <div class="row">
-    <div><div class="big"><span id="spd">0</span> <small>km/h</small></div></div>
-    <div style="text-align:right"><div style="font-weight:700" id="dist">— km</div><div style="color:#b0124f;font-weight:600" id="eta">— min</div></div>
-  </div>
-  <div class="bar"><div id="prog"></div></div>
-  <div class="modes" id="modes">
-    <button data-m="bike" class="on">🚲 Cycle</button>
-    <button data-m="foot">🚶 Walk</button>
-    <button data-m="car">🚗 Car</button>
-  </div>
-  <div class="act"><button id="bsim">▶ Simulate</button><button id="bclear">✕ Clear</button></div>
-</div>
-
-<script>
-function showErr(m){const t=document.getElementById('top');if(t){t.style.background='#fde8e8';t.textContent='Error: '+m}}
-window.addEventListener('error',e=>showErr(e.message+(e.lineno?' (line '+e.lineno+')':'')));
-window.addEventListener('unhandledrejection',e=>showErr(String(e.reason&&e.reason.message||e.reason)));
-if(typeof maplibregl==='undefined'){document.getElementById('top').textContent='Map library load hoy nai – internet/https check koro';throw new Error('maplibre missing')}
-const CY=[33.3823,35.1856];
-const $=id=>document.getElementById(id);
-const S={mode:'bike',me:null,dest:null,route:null,cum:[],follow:true,is3d:true,sim:null,heading:0,lastPos:null,lastT:0};
-
-const map=new maplibregl.Map({
-  container:'map',center:CY,zoom:16,pitch:60,maxPitch:80,
-  style:{version:8,sources:{
-    sat:{type:'raster',tileSize:256,maxzoom:19,attribution:'Imagery © Esri',tiles:['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}']},
-    lbl:{type:'raster',tileSize:256,maxzoom:19,tiles:['https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}']},
-    osm:{type:'raster',tileSize:256,maxzoom:19,attribution:'© OpenStreetMap',tiles:['https://tile.openstreetmap.org/{z}/{x}/{y}.png']}},
-  layers:[
-    {id:'osm',type:'raster',source:'osm',layout:{visibility:'none'}},
-    {id:'sat',type:'raster',source:'sat'},
-    {id:'lbl',type:'raster',source:'lbl'}]}
-});
-map.on('error',e=>{const m=e.error&&e.error.message||'';console.warn(m);if(m&&!/tile|Failed to fetch|NetworkError|AJAX|404|Load failed/i.test(m))showErr(m)});
-
-// markers
-const meEl=document.createElement('div');meEl.className='me';meEl.innerHTML='<div class="ring"></div><div class="ic">🚲</div>';
-const meMk=new maplibregl.Marker({element:meEl,rotationAlignment:'map',pitchAlignment:'viewport'});
-let destMk=null;
-
-map.on('load',()=>{
-  map.addSource('rem',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
-  map.addLayer({id:'rem-c',type:'line',source:'rem',layout:{'line-cap':'round','line-join':'round'},paint:{'line-color':'#fff','line-width':11}});
-  map.addLayer({id:'rem',type:'line',source:'rem',layout:{'line-cap':'round','line-join':'round'},paint:{'line-color':'#d6195f','line-width':7}});
-  startGPS();
-});
-
-// GPS
-function startGPS(){
-  if(!navigator.geolocation){setMe(CY,0,0);return}
-  navigator.geolocation.watchPosition(p=>{
-    if(S.sim)return;
-    const c=[p.coords.longitude,p.coords.latitude];
-    let h=p.coords.heading;
-    if(h==null||isNaN(h)){h=S.lastPos?bearing(S.lastPos,c):S.heading}
-    S.lastPos=c;
-    setMe(c,h,(p.coords.speed||0)*3.6);
-    onMove();
-  },()=>{if(!S.me){setMe(CY,0,0);$('top').innerHTML='GPS pai nai – Nicosia theke start. <b>Simulate</b> try koro'}},
-  {enableHighAccuracy:true,maximumAge:1000,timeout:15000});
-}
-function setMe(c,h,spd){
-  S.me=c;S.heading=h;meMk.setLngLat(c).setRotation(0).addTo(map);
-  $('spd').textContent=Math.round(spd);
-  if(S.follow)map.easeTo({center:c,bearing:h,pitch:S.is3d?60:0,zoom:Math.max(map.getZoom(),17.2),duration:900,easing:t=>t});
-}
-
-// geometry
-const R=6371000,rad=d=>d*Math.PI/180;
-function hav(a,b){const dLa=rad(b[1]-a[1]),dLo=rad(b[0]-a[0]);const x=Math.sin(dLa/2)**2+Math.cos(rad(a[1]))*Math.cos(rad(b[1]))*Math.sin(dLo/2)**2;return 2*R*Math.asin(Math.sqrt(x))}
-function bearing(a,b){const y=Math.sin(rad(b[0]-a[0]))*Math.cos(rad(b[1])),x=Math.cos(rad(a[1]))*Math.sin(rad(b[1]))-Math.sin(rad(a[1]))*Math.cos(rad(b[1]))*Math.cos(rad(b[0]-a[0]));return (Math.atan2(y,x)*180/Math.PI+360)%360}
-
-// routing (free OSM routing, no API key)
-async function getRoute(){
-  if(!S.me||!S.dest)return;
-  $('top').textContent='Route khujchi…';
-  const prof={bike:'routed-bike',foot:'routed-foot',car:'routed-car'}[S.mode];
-  const u=`https://routing.openstreetmap.de/${prof}/route/v1/driving/${S.me.join(',')};${S.dest.join(',')}?overview=full&geometries=geojson`;
-  try{
-    const r=await (await fetch(u)).json();
-    if(!r.routes||!r.routes[0])throw 0;
-    S.route=r.routes[0].geometry.coordinates;
-    S.cum=[0];for(let i=1;i<S.route.length;i++)S.cum.push(S.cum[i-1]+hav(S.route[i-1],S.route[i]));
-    S.total=S.cum[S.cum.length-1];
-    drawRoute(0);
-    $('top').innerHTML=`<b>${{bike:'Cycle',foot:'Walk',car:'Car'}[S.mode]}</b> route ready`;
-    const b=new maplibregl.LngLatBounds();S.route.forEach(c=>b.extend(c));
-    if(!S.follow)map.fitBounds(b,{padding:80,pitch:0});
-  }catch(e){
-    const a=S.me,b=S.dest,n=Math.max(2,Math.ceil(hav(a,b)/20));
-    S.route=[];for(let i=0;i<=n;i++)S.route.push([a[0]+(b[0]-a[0])*i/n,a[1]+(b[1]-a[1])*i/n]);
-    S.cum=[0];for(let i=1;i<S.route.length;i++)S.cum.push(S.cum[i-1]+hav(S.route[i-1],S.route[i]));
-    S.total=S.cum[S.cum.length-1];drawRoute(0);
-    $('top').textContent='Routing server pai nai – shoja line (demo) dekhachchi';
-  }
-}
-function drawRoute(i){
-  const rest=[S.me,...S.route.slice(i+1)];
-  map.getSource('rem').setData({type:'Feature',geometry:{type:'LineString',coordinates:rest}});
-  const left=Math.max(0,S.total-(S.cum[i]||0));
-  const v={bike:16,foot:5,car:35}[S.mode];
-  $('dist').textContent=(left/1000).toFixed(1)+' km';
-  $('eta').textContent=Math.max(1,Math.round(left/1000/v*60))+' min';
-  $('prog').style.width=Math.min(100,(S.cum[i]/S.total*100||0))+'%';
-}
-function onMove(){
-  if(!S.route)return;
-  let best=0,bd=1e9;
-  for(let i=0;i<S.route.length;i++){const d=hav(S.me,S.route[i]);if(d<bd){bd=d;best=i}}
-  drawRoute(best);
-  if(S.total-S.cum[best]<20){$('top').innerHTML='🎉 <b>Pouche gechi!</b>'}
-  else if(bd>60&&!S.sim){getRoute()} // off-route → reroute
-}
-
-// destination by tap
-map.on('click',e=>{
-  if(S.sim)return;
-  S.dest=[e.lngLat.lng,e.lngLat.lat];
-  if(destMk)destMk.remove();
-  const el=document.createElement('div');el.className='dest';el.textContent='📍';
-  destMk=new maplibregl.Marker({element:el,anchor:'bottom'}).setLngLat(S.dest).addTo(map);
-  getRoute();
-});
-
-// mode select
-$('modes').onclick=e=>{
-  const m=e.target.dataset.m;if(!m)return;
-  S.mode=m;[...$('modes').children].forEach(b=>b.classList.toggle('on',b===e.target));
-  meEl.querySelector('.ic').textContent={bike:'🚲',foot:'🚶',car:'🚗'}[m];
-  stopSim();getRoute();
-};
-
-// simulate
-function startSim(){
-  if(!S.route){$('top').textContent='Age map-e tap kore destination dao';return}
-  stopSim();
-  let d=0;const v={bike:16,foot:5,car:35}[S.mode]/3.6;
-  S.sim=setInterval(()=>{
-    d+=v*0.5*4; // 4x speed demo
-    if(d>=S.total){stopSim();return}
-    let i=1;while(i<S.cum.length&&S.cum[i]<d)i++;
-    const a=S.route[i-1],b=S.route[i],t=(d-S.cum[i-1])/((S.cum[i]-S.cum[i-1])||1);
-    const c=[a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t];
-    const h=bearing(a,b);
-    // smooth heading
-    const hh=S.heading+((((h-S.heading)%360)+540)%360-180)*0.4;
-    setMe(c,hh,v*3.6);onMove();
-  },500);
-  $('bsim').textContent='⏸ Stop';
-}
-function stopSim(){if(S.sim){clearInterval(S.sim);S.sim=null}$('bsim').textContent='▶ Simulate'}
-$('bsim').onclick=()=>S.sim?stopSim():startSim();
-$('bclear').onclick=()=>{stopSim();S.route=null;S.dest=null;if(destMk)destMk.remove();map.getSource('rem').setData({type:'FeatureCollection',features:[]});$('dist').textContent='— km';$('eta').textContent='— min';$('prog').style.width=0};
-
-// view buttons
-$('b2d').onclick=()=>{
-  S.is3d=!S.is3d;$('b2d').textContent=S.is3d?'2D':'3D';
-  map.easeTo({pitch:S.is3d?60:0,duration:600});
-  map.setLayoutProperty('osm','visibility',S.is3d?'none':'visible');
-  map.setLayoutProperty('sat','visibility',S.is3d?'visible':'none');
-  map.setLayoutProperty('lbl','visibility',S.is3d?'visible':'none');
-};
-$('bfollow').onclick=()=>{S.follow=!S.follow;$('bfollow').style.opacity=S.follow?1:.45;if(S.follow&&S.me)setMe(S.me,S.heading,0)};
-map.on('dragstart',()=>{S.follow=false;$('bfollow').style.opacity=.45});
-</script>
-</body>
-</html>
