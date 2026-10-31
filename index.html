@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Cycle Tracker – Google Maps</title>
+<style>
+*{box-sizing:border-box;margin:0}
+html,body{height:100%;font-family:system-ui,sans-serif;overflow:hidden}
+#map{position:absolute;inset:0}
+.top{position:absolute;top:calc(env(safe-area-inset-top,0px) + 10px);left:10px;right:10px;background:#fff;border-radius:22px;padding:8px 10px;box-shadow:0 2px 10px #0004;z-index:5}
+.sb{display:flex;gap:6px}.sb input{flex:1;min-width:0;border:0;background:#f1f1f1;border-radius:18px;padding:10px 14px;font-size:16px;outline:0}
+.sb button{border:0;background:#b0124f;color:#fff;border-radius:18px;padding:0 14px;font-size:16px}
+#res{max-height:230px;overflow:auto}#res div{padding:10px 6px;border-top:1px solid #eee;font-size:13px}
+#msg{font-size:12px;color:#444;margin-top:6px;padding:2px 4px;border-radius:8px}
+.fabs{position:absolute;right:12px;top:calc(env(safe-area-inset-top,0px) + 130px);display:flex;flex-direction:column;gap:8px;z-index:4}
+.fab{width:46px;height:46px;border-radius:50%;background:#fff;border:0;box-shadow:0 2px 8px #0004;font-size:18px}
+.fab.on{background:#b0124f;color:#fff}.fab.pulse{animation:pl 1.2s infinite;background:#b0124f;color:#fff}
+@keyframes pl{50%{transform:scale(1.12)}}
+.card{position:absolute;left:10px;right:10px;bottom:calc(env(safe-area-inset-bottom,0px) + 10px);background:#fff;border-radius:24px;padding:14px;box-shadow:0 2px 14px #0005;z-index:5}
+.row{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.big{font-size:34px;font-weight:800;line-height:1}.big small{font-size:13px;font-weight:500;color:#666}
+.bar{height:6px;background:#ddd;border-radius:3px;margin:10px 0;overflow:hidden}#prog{height:100%;width:0;background:#b0124f}
+#chips{display:flex;gap:6px;overflow-x:auto;margin-bottom:6px}
+#chips button{flex:none;border:2px solid #ddd;background:#fff;border-radius:14px;padding:8px 10px;font-size:12px}
+#chips button.on{border-color:#b0124f;background:#fbe6ee;font-weight:700}
+.btns{display:flex;gap:6px;margin-top:6px}
+.btns button{flex:1;padding:10px 4px;border:0;border-radius:14px;background:#f1f1f1;font-size:13px}
+.btns button.on{background:#b0124f;color:#fff}.btns .go{background:#1a8f4b;color:#fff;font-weight:700}
+.me{width:46px;height:46px;position:relative;transform:translateY(50%)}
+.me .ring{position:absolute;inset:0;border-radius:50%;background:#b0124f44;animation:p 1.6s infinite}
+.me .ic{position:absolute;inset:6px;border-radius:50%;background:#b0124f;border:3px solid #fff;display:flex;align-items:center;justify-content:center;font-size:18px;box-shadow:0 2px 6px #0006}
+.me .dir{position:absolute;inset:-18px;pointer-events:none}
+.me .dir::before{content:'';position:absolute;left:50%;top:0;width:26px;height:28px;margin-left:-13px;background:#b0124f;clip-path:polygon(50% 0,100% 100%,50% 72%,0 100%);filter:drop-shadow(0 1px 2px #0008)}
+@keyframes p{0%{transform:scale(.6);opacity:1}100%{transform:scale(1.4);opacity:0}}
+.dest{font-size:30px}
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div class="top">
+  <div class="sb"><input id="q" placeholder="Kothay jabe? (Cyprus e search koro)" autocomplete="off"><button id="qb">🔍</button></div>
+  <div id="res"></div>
+  <div id="msg">Search koro ba map-e tap kore destination dao</div>
+</div>
+<div class="fabs">
+  <button class="fab" id="bfollow" title="Amar location">📍</button>
+  <button class="fab on" id="btraffic" title="Traffic / jam">🚦</button>
+  <button class="fab" id="btype" title="Satellite / Map">🗺</button>
+  <button class="fab" id="bsv" title="Road view (Street View)">👁</button>
+</div>
+<div class="card">
+  <div class="row">
+    <div class="big"><span id="spd">0</span> <small>km/h</small></div>
+    <div style="text-align:right"><div style="font-weight:700" id="dist">— km</div><div style="color:#b0124f;font-weight:600" id="eta">— min</div></div>
+  </div>
+  <div class="bar"><div id="prog"></div></div>
+  <div id="chips"></div>
+  <div class="btns" id="modes">
+    <button data-m="bike" class="on">🚲 Cycle</button><button data-m="foot">🚶 Walk</button><button data-m="car">🚗 Car</button>
+  </div>
+  <div class="btns"><button class="go" id="bgo">▶ Start</button><button id="bsim">Simulate</button><button id="bclear">✕ Clear</button></div>
+</div>
+
+<script>
+// ====== EKHANE tomar Google Maps API key boshao ======
+const KEY='YOUR_GOOGLE_MAPS_API_KEY';
+// =====================================================
+const $=id=>document.getElementById(id);
+const CY={lat:35.1856,lng:33.3823};
+const S={mode:'bike',target:null,dest:null,routes:[],sel:0,nav:false,follow:true,heading:0,speed:0,sim:null,zoom:19,last:null,lastT:0};
+let map,meMk,destMk,traffic,sv,Route,cur=null,hcur=0,svT=0;
+const R=6371000,rad=d=>d*Math.PI/180;
+const hav=(a,b)=>{const x=Math.sin(rad(b.lat-a.lat)/2)**2+Math.cos(rad(a.lat))*Math.cos(rad(b.lat))*Math.sin(rad(b.lng-a.lng)/2)**2;return 2*R*Math.asin(Math.sqrt(x))};
+const bearing=(a,b)=>{const y=Math.sin(rad(b.lng-a.lng))*Math.cos(rad(b.lat)),x=Math.cos(rad(a.lat))*Math.sin(rad(b.lat))-Math.sin(rad(a.lat))*Math.cos(rad(b.lat))*Math.cos(rad(b.lng-a.lng));return (Math.atan2(y,x)*180/Math.PI+360)%360};
+const angd=(a,b)=>((a-b+540)%360)-180;
+const msg=(m,err)=>{const e=$('msg');e.textContent=m;e.style.background=err?'#fde8e8':'';};
+window.addEventListener('error',e=>{if(e.message!=='Script error.')msg('Error: '+e.message,1)});
+window.addEventListener('unhandledrejection',e=>msg('Error: '+(e.reason&&e.reason.message||e.reason),1));
+window.gm_authFailure=()=>msg('API key problem – key/billing/API enable check koro',1);
+
+if(KEY.startsWith('YOUR_')){msg('Code er upore KEY e Google Maps API key boshao',1)}
+else{const s=document.createElement('script');s.src=`https://maps.googleapis.com/maps/api/js?key=${KEY}&v=weekly&loading=async&callback=init`;s.async=true;s.onerror=()=>msg('Google Maps load hoy nai – internet check koro',1);document.head.appendChild(s)}
+
+const meEl=document.createElement('div');meEl.className='me';meEl.innerHTML='<div class="dir"></div><div class="ring"></div><div class="ic">🚲</div>';
+const updDir=()=>{meEl.querySelector('.dir').style.transform=`rotate(${hcur-(map.getHeading()||0)}deg)`};
+
+window.init=async()=>{
+  const {Map}=await google.maps.importLibrary('maps');
+  const {AdvancedMarkerElement}=await google.maps.importLibrary('marker');
+  ({Route}=await google.maps.importLibrary('routes'));
+  map=new Map($('map'),{center:CY,zoom:19,mapTypeId:'hybrid',tilt:60,heading:0,mapId:'DEMO_MAP_ID',disableDefaultUI:true,gestureHandling:'greedy',clickableIcons:false});
+  traffic=new google.maps.TrafficLayer();traffic.setMap(map);
+  sv=map.getStreetView();
+  meMk=new AdvancedMarkerElement({map,position:CY,content:meEl,zIndex:999});
+  window.AME=AdvancedMarkerElement;
+  map.addListener('click',e=>{$('res').innerHTML='';setDest(e.latLng.toJSON())});
+  map.addListener('dragstart',()=>setFollow(false));
+  map.addListener('zoom_changed',()=>{S.zoom=map.getZoom()});
+  startGPS();requestAnimationFrame(frame);
+};
+
+// ---- GPS + smooth animation ----
+function setTarget(c,h,spd){
+  if(S.last&&h==null&&hav(S.last,c)>3)h=bearing(S.last,c);
+  if(h!=null&&!isNaN(h))S.heading=h;
+  S.last=c;S.target=c;S.speed=spd||0;$('spd').textContent=Math.round(S.speed);
+  if(S.nav)onMove();
+  const t=Date.now();if(sv&&sv.getVisible()&&t-svT>400){svT=t;sv.setPosition(c);sv.setPov({heading:S.heading,pitch:0})}
+}
+function startGPS(){
+  if(!navigator.geolocation){setTarget(CY,0,0);return}
+  navigator.geolocation.watchPosition(p=>{
+    if(S.sim)return;
+    setTarget({lat:p.coords.latitude,lng:p.coords.longitude},p.coords.heading,(p.coords.speed||0)*3.6);
+  },()=>{if(!S.target){setTarget(CY,0,0);msg('GPS pai nai – Nicosia theke start. Simulate try koro',1)}},
+  {enableHighAccuracy:true,maximumAge:500,timeout:15000});
+}
+function frame(){
+  if(S.target){
+    if(!cur)cur={...S.target};
+    cur.lat+=(S.target.lat-cur.lat)*.12;cur.lng+=(S.target.lng-cur.lng)*.12;
+    hcur=(hcur-angd(hcur,S.heading)*.1+360)%360;
+    meMk.position=cur;updDir();
+    if(S.follow)map.moveCamera({center:cur,heading:hcur,tilt:60,zoom:S.zoom});
+  }
+  requestAnimationFrame(frame);
+}
+function setFollow(v){S.follow=v;$('bfollow').classList.toggle('pulse',!v)}
+$('bfollow').onclick=()=>{setFollow(true);S.zoom=19};
+
+// ---- destination + search ----
+function setDest(c,label){
+  stopSim();S.dest=c;S.nav=false;
+  if(destMk)destMk.map=null;
+  const el=document.createElement('div');el.className='dest';el.textContent='📍';
+  destMk=new AME({map,position:c,content:el});
+  if(label)msg('→ '+label);
+  getRoute();
+}
+async function search(){
+  const q=$('q').value.trim();if(q.length<2)return;
+  $('res').innerHTML='<div>Khujchi…</div>';
+  try{
+    const r=await (await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=6&countrycodes=cy&q='+encodeURIComponent(q))).json();
+    if(!r.length){$('res').innerHTML='<div>Kichu pai nai – onno naam try koro</div>';return}
+    $('res').innerHTML='';
+    r.forEach(x=>{const d=document.createElement('div');d.textContent=x.display_name;
+      d.onclick=()=>{$('res').innerHTML='';$('q').value=x.display_name.split(',')[0];$('q').blur();setDest({lat:+x.lat,lng:+x.lon},x.display_name.split(',').slice(0,2).join(','))};
+      $('res').appendChild(d)});
+  }catch(e){$('res').innerHTML='<div>Search kaj korche na – internet check koro</div>'}
+}
+$('qb').onclick=search;
+$('q').addEventListener('keydown',e=>{if(e.key==='Enter')search()});
+let qt;$('q').addEventListener('input',()=>{clearTimeout(qt);qt=setTimeout(search,700)});
+
+// ---- routes (Google Routes: traffic-aware, alternatives) ----
+function clearRoutes(){S.routes.forEach(r=>r.line&&r.line.setMap(null));S.routes=[];$('chips').innerHTML=''}
+async function getRoute(keepNav){
+  if(!S.target||!S.dest)return;
+  msg('Route khujchi…');
+  const modes=S.mode==='bike'?['BICYCLING','DRIVING']:S.mode==='foot'?['WALKING']:['DRIVING'];
+  let res=null,used=null;
+  for(const m of modes){
+    try{
+      const req={origin:S.target,destination:S.dest,travelMode:m,computeAlternativeRoutes:true,fields:['path','distanceMeters','durationMillis']};
+      if(m==='DRIVING')req.routingPreference='TRAFFIC_AWARE';
+      const r=await Route.computeRoutes(req);
+      if(r.routes&&r.routes.length){res=r.routes;used=m;break}
+    }catch(e){console.warn(m,e.message)}
+  }
+  if(!res){msg('Route pai nai – API (Routes API) enable ache kina check koro',1);return}
+  clearRoutes();
+  S.routes=res.map(r=>({path:r.path.map(p=>({lat:p.lat,lng:p.lng})),dist:r.distanceMeters,dur:r.durationMillis}))
+    .sort((a,b)=>a.dur-b.dur); // shobcheye druto route aage
+  S.routes.forEach((r,i)=>{
+    r.line=new google.maps.Polyline({map,path:r.path,clickable:true,strokeColor:'#4a7dff',strokeOpacity:.75,strokeWeight:7,zIndex:1});
+    r.line.addListener('click',()=>{if(!S.nav)selectRoute(i)});
+    const b=document.createElement('button');b.onclick=()=>{if(!S.nav)selectRoute(i)};
+    b.textContent=`${i==0?'⚡ ':''}${Math.max(1,Math.round(r.dur/60000))} min · ${(r.dist/1000).toFixed(1)} km`;
+    $('chips').appendChild(b);
+  });
+  selectRoute(0);
+  msg((used==='DRIVING'&&S.mode==='bike'?'⚠ Cyprus e Google cycle route dey na – road route dekhachchi. ':'')+`${S.routes.length} ta route. Chip/line e chap diye nijer pochondo select koro, tarpor Start`);
+  if(keepNav){startNav()}
+  else{const b=new google.maps.LatLngBounds();S.routes.forEach(r=>r.path.forEach(p=>b.extend(p)));setFollow(false);map.fitBounds(b,{top:170,bottom:300,left:40,right:70})}
+}
+function selectRoute(i){
+  S.sel=i;
+  S.routes.forEach((r,k)=>{r.line.setOptions(k==i?{strokeColor:'#d6195f',strokeOpacity:1,strokeWeight:9,zIndex:3}:{strokeColor:'#4a7dff',strokeOpacity:.7,strokeWeight:6,zIndex:1});r.cum=null});
+  [...$('chips').children].forEach((b,k)=>b.classList.toggle('on',k==i));
+  const r=S.routes[i];r.cum=[0];for(let k=1;k<r.path.length;k++)r.cum.push(r.cum[k-1]+hav(r.path[k-1],r.path[k]));
+  r.total=r.cum[r.cum.length-1];showLeft(r,0);
+}
+function showLeft(r,i){
+  const left=Math.max(0,r.total-r.cum[i]);
+  $('dist').textContent=(left/1000).toFixed(1)+' km';
+  $('eta').textContent=Math.max(1,Math.round(r.dur/60000*left/r.total))+' min';
+  $('prog').style.width=Math.min(100,r.cum[i]/r.total*100)+'%';
+}
+
+// ---- navigation ----
+function startNav(){
+  const r=S.routes[S.sel];if(!r){msg('Age destination dao',1);return}
+  S.nav=true;S.routes.forEach((x,k)=>{if(k!=S.sel)x.line.setMap(null)});
+  $('chips').innerHTML='';setFollow(true);S.zoom=19;msg('Navigation cholche');onMove();
+}
+function onMove(){
+  const r=S.routes[S.sel];if(!r||!S.nav)return;
+  let best=0,bd=1e9;for(let i=0;i<r.path.length;i++){const d=hav(S.target,r.path[i]);if(d<bd){bd=d;best=i}}
+  r.line.setPath([S.target,...r.path.slice(best+1)]);showLeft(r,best);
+  if(r.total-r.cum[best]<25){S.nav=false;stopSim();msg('🎉 Pouche gechi!');return}
+  if(bd>70&&!S.sim){msg('Route theke soreso – notun route…');getRoute(true)}
+}
+$('bgo').onclick=()=>S.nav?(S.nav=false,msg('Navigation bondho')):startNav();
+
+// ---- simulate ----
+function startSim(){
+  if(!S.routes[S.sel]){msg('Age destination dao',1);return}
+  stopSim();if(!S.nav)startNav();
+  const r=S.routes[S.sel],v={bike:16,foot:5,car:35}[S.mode]/3.6;let d=0;
+  S.sim=setInterval(()=>{
+    d+=v*0.5*4;if(d>=r.total){stopSim();return}
+    let i=1;while(i<r.cum.length&&r.cum[i]<d)i++;
+    const a=r.path[i-1],b=r.path[i],t=(d-r.cum[i-1])/((r.cum[i]-r.cum[i-1])||1);
+    setTarget({lat:a.lat+(b.lat-a.lat)*t,lng:a.lng+(b.lng-a.lng)*t},bearing(a,b),v*3.6);
+  },500);
+  $('bsim').textContent='⏸ Stop';
+}
+function stopSim(){if(S.sim){clearInterval(S.sim);S.sim=null}$('bsim').textContent='Simulate'}
+$('bsim').onclick=()=>S.sim?stopSim():startSim();
+$('bclear').onclick=()=>{stopSim();S.nav=false;S.dest=null;clearRoutes();if(destMk)destMk.map=null;$('dist').textContent='— km';$('eta').textContent='— min';$('prog').style.width=0;msg('Search koro ba map-e tap kore destination dao')};
+
+// ---- buttons ----
+$('modes').onclick=e=>{const m=e.target.dataset.m;if(!m)return;S.mode=m;
+  [...$('modes').children].forEach(b=>b.classList.toggle('on',b===e.target));
+  meEl.querySelector('.ic').textContent={bike:'🚲',foot:'🚶',car:'🚗'}[m];
+  stopSim();S.nav=false;getRoute()};
+$('btraffic').onclick=()=>{const on=!traffic.getMap();traffic.setMap(on?map:null);$('btraffic').classList.toggle('on',on)};
+$('btype').onclick=()=>{const sat=map.getMapTypeId()==='hybrid';map.setMapTypeId(sat?'roadmap':'hybrid');$('btype').textContent=sat?'🛰':'🗺'};
+$('bsv').onclick=()=>{
+  if(sv.getVisible()){sv.setVisible(false);$('bsv').classList.remove('on');return}
+  sv.setPosition(S.target||CY);sv.setPov({heading:S.heading,pitch:0});sv.setVisible(true);$('bsv').classList.add('on');
+};
+</script>
+</body>
+</html>
